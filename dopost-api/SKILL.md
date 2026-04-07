@@ -205,6 +205,282 @@ On `429`, respect the `Retry-After` header before retrying.
 
 ---
 
+## Examples
+
+### 1. List connected accounts
+
+**Request**
+```bash
+curl -H "x-api-key: $DOPOST_API_KEY" \
+  https://dopost.co/api/v1/social/accounts
+```
+
+**Response `200 OK`**
+```json
+{
+  "accounts": [
+    {
+      "id": "cm3xyz789ghi012",
+      "platform": "INSTAGRAM",
+      "platformUsername": "myaccount",
+      "platformUserId": "17841400000000001"
+    },
+    {
+      "id": "cm3abc456def789",
+      "platform": "LINKEDIN",
+      "platformUsername": "johndoe",
+      "platformUserId": "urn:li:person:a1B2c3D4e5"
+    }
+  ]
+}
+```
+
+---
+
+### 2. Publish a text post immediately
+
+**Request**
+```bash
+curl -X POST \
+  -H "x-api-key: $DOPOST_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accountId": "cm3xyz789ghi012",
+    "text": "Hello from the Dopost API!"
+  }' \
+  https://dopost.co/api/v1/post/publish
+```
+
+**Response `202 Accepted`**
+```json
+{
+  "success": true,
+  "jobId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "postId": "cm3abc123def456",
+  "status": "processing",
+  "statusUrl": "/api/v1/post/status/f47ac10b-58cc-4372-a567-0e02b2c3d479"
+}
+```
+
+---
+
+### 3. Poll post status
+
+**Request**
+```bash
+curl -H "x-api-key: $DOPOST_API_KEY" \
+  https://dopost.co/api/v1/post/status/f47ac10b-58cc-4372-a567-0e02b2c3d479
+```
+
+**Response — still processing**
+```json
+{
+  "status": "processing",
+  "postId": "cm3abc123def456"
+}
+```
+
+**Response — published**
+```json
+{
+  "status": "published",
+  "postId": "cm3abc123def456",
+  "publishedAt": "2026-04-07T10:32:18.000Z",
+  "platformPostId": "17846368219941196"
+}
+```
+
+**Response — failed**
+```json
+{
+  "status": "failed",
+  "postId": "cm3abc123def456",
+  "error": "Invalid payload: image aspect ratio not supported for Reels"
+}
+```
+
+---
+
+### 4. Publish an Instagram Reel
+
+**Request**
+```bash
+curl -X POST \
+  -H "x-api-key: $DOPOST_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accountId": "cm3xyz789ghi012",
+    "text": "New reel! 🎬 #content",
+    "media": ["https://cdn.example.com/video.mp4"],
+    "platformOptions": {
+      "postType": "reel"
+    }
+  }' \
+  https://dopost.co/api/v1/post/publish
+```
+
+**Response `202 Accepted`**
+```json
+{
+  "success": true,
+  "jobId": "a1b2c3d4-0000-4abc-8def-111122223333",
+  "postId": "cm3reel001xyz",
+  "status": "processing",
+  "statusUrl": "/api/v1/post/status/a1b2c3d4-0000-4abc-8def-111122223333"
+}
+```
+
+---
+
+### 5. Schedule a post
+
+**Request**
+```bash
+curl -X POST \
+  -H "x-api-key: $DOPOST_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accountId": "cm3abc456def789",
+    "text": "Scheduled post for next Monday!",
+    "publishAt": "2026-04-13T09:00:00Z"
+  }' \
+  https://dopost.co/api/v1/post/publish
+```
+
+**Response `202 Accepted`**
+```json
+{
+  "success": true,
+  "jobId": "b2c3d4e5-1111-4bcd-9ef0-222233334444",
+  "postId": "cm3sched001abc",
+  "status": "scheduled",
+  "statusUrl": "/api/v1/post/status/b2c3d4e5-1111-4bcd-9ef0-222233334444"
+}
+```
+
+---
+
+### 6. Upload media and publish with it
+
+**Step 1 — Request presigned URL**
+```bash
+curl -X POST \
+  -H "x-api-key: $DOPOST_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "fileName": "photo.jpg",
+    "contentType": "image/jpeg",
+    "sizeInBytes": 204800
+  }' \
+  https://dopost.co/api/v1/media
+```
+
+**Response `200 OK`**
+```json
+{
+  "mediaId": "cm3media001xyz",
+  "uploadUrl": "https://storage.example.com/uploads/photo.jpg?X-Amz-Signature=...",
+  "publicUrl": "https://cdn.dopost.co/media/cm3media001xyz/photo.jpg"
+}
+```
+
+**Step 2 — Upload the file**
+```bash
+curl -X PUT \
+  -H "Content-Type: image/jpeg" \
+  --data-binary @photo.jpg \
+  "$UPLOAD_URL"
+```
+Returns `200` with empty body on success.
+
+**Step 3 — Publish using the public URL**
+```bash
+curl -X POST \
+  -H "x-api-key: $DOPOST_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "accountId": "cm3xyz789ghi012",
+    "text": "Check out this photo!",
+    "media": ["https://cdn.dopost.co/media/cm3media001xyz/photo.jpg"]
+  }' \
+  https://dopost.co/api/v1/post/publish
+```
+
+---
+
+### 7. Reschedule a pending post
+
+**Request**
+```bash
+curl -X PATCH \
+  -H "x-api-key: $DOPOST_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{ "publishAt": "2026-04-20T14:00:00Z" }' \
+  https://dopost.co/api/v1/post/cm3sched001abc
+```
+
+**Response `200 OK`**
+```json
+{
+  "success": true,
+  "postId": "cm3sched001abc",
+  "publishAt": "2026-04-20T14:00:00Z",
+  "status": "PENDING"
+}
+```
+
+---
+
+### 8. List posts with filter
+
+**Request**
+```bash
+curl -H "x-api-key: $DOPOST_API_KEY" \
+  "https://dopost.co/api/v1/post?status=PUBLISHED&limit=5"
+```
+
+**Response `200 OK`**
+```json
+{
+  "posts": [
+    {
+      "id": "cm3abc123def456",
+      "status": "PUBLISHED",
+      "text": "Hello from the Dopost API!",
+      "publishedAt": "2026-04-07T10:32:18.000Z",
+      "account": {
+        "id": "cm3xyz789ghi012",
+        "platform": "INSTAGRAM",
+        "platformUsername": "myaccount"
+      }
+    }
+  ],
+  "nextCursor": null,
+  "hasMore": false
+}
+```
+
+---
+
+### 9. Delete a post
+
+**Request**
+```bash
+curl -X DELETE \
+  -H "x-api-key: $DOPOST_API_KEY" \
+  https://dopost.co/api/v1/post/delete/cm3sched001abc
+```
+
+**Response `200 OK`**
+```json
+{
+  "success": true,
+  "postId": "cm3sched001abc"
+}
+```
+
+---
+
 ## MCP server (optional)
 
 If the user has the Dopost MCP server configured, prefer using MCP tools (`publish_post`, `list_accounts`, etc.) over raw HTTP calls — they handle auth and path safety automatically.
