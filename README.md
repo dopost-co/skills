@@ -12,7 +12,7 @@ npx skills add dopost-co/skills
 
 | Skill | Description |
 |-------|-------------|
-| [seo-audit](./seo-audit/SKILL.md) | Full technical + on-page SEO audit |
+| [dopost-api](./dopost-api/SKILL.md) | Publish and manage social media posts via the Dopost REST API |
 
 ## Usage with specific agents
 
