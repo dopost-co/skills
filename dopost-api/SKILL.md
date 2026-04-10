@@ -3,7 +3,7 @@ name: dopost-api
 description: Use the Dopost REST API to publish, schedule, and manage social media posts programmatically. Use this skill when the user wants to publish to social media, schedule posts, manage media uploads, check post status, list connected accounts, or interact with any Dopost API endpoint. Also activate when the user mentions dopost, the Dopost API, social media automation, or publishing via API key.
 license: MIT
 metadata:
-  version: 1.0.0
+  version: 1.1.0
   author: dopost-co
 ---
 
@@ -34,7 +34,7 @@ export DOPOST_API_KEY="dpk_live_..."
 #### List connected accounts
 ```
 GET /api/v1/social/accounts
-Scope: social:read
+Scope: social:accounts
 ```
 ```bash
 curl -H "x-api-key: $DOPOST_API_KEY" https://dopost.co/api/v1/social/accounts
@@ -45,7 +45,7 @@ The `id` field is the `accountId` needed for publishing.
 #### Get platform limits
 ```
 GET /api/v1/social/limits/:platform
-Scope: social:read
+Scope: social:limits
 ```
 Platforms: `x`, `instagram`, `instagram_direct`, `facebook`, `linkedin`, `linkedin_organization`, `tiktok`, `youtube`, `threads`, `bluesky`, `mastodon`, `pinterest`
 
@@ -63,7 +63,7 @@ curl -H "x-api-key: $DOPOST_API_KEY" https://dopost.co/api/v1/social/limits/inst
 #### Publish or schedule a post
 ```
 POST /api/v1/post/publish
-Scope: post:write
+Scope: posts:create
 ```
 ```json
 {
@@ -75,9 +75,11 @@ Scope: post:write
 }
 ```
 - At least `text` or `media` is required
+- `media` can be an array of URL strings or objects `{ url: "..." }`
+- Maximum 10 media items per post
 - Omit `publishAt` (or set to `null`) to publish immediately
-- Returns `202` with `{ jobId, postId, statusUrl }`
-- Publishing is **asynchronous** — poll the status endpoint
+- Returns `202` with `{ success, jobId, postId, status }`
+- Publishing is **asynchronous** — poll `GET /api/v1/post/:postId` to check status
 
 ##### Platform-specific options (`platformOptions`)
 
@@ -106,40 +108,62 @@ Scope: post:write
 |-------|-------------|
 | `board` | Board ID (required for Pinterest) |
 
-#### Check post status
+#### Get a post
 ```
-GET /api/v1/post/status/:jobId
-Scope: post:read
+GET /api/v1/post/:postId
+Scope: posts:read
 ```
-Poll this after publishing. Status values: `processing`, `published`, `failed`, `scheduled`.
+Returns the full post object including publish status:
+```json
+{
+  "id": "cm3abc123def456",
+  "status": "PUBLISHED",
+  "platform": "INSTAGRAM",
+  "text": "Post content",
+  "media": [],
+  "postUrl": "https://instagram.com/p/...",
+  "account": {
+    "id": "cm3xyz789ghi012",
+    "platform": "INSTAGRAM",
+    "platformUsername": "myaccount"
+  },
+  "schedule": {
+    "scheduledFor": "2026-04-13T09:00:00.000Z",
+    "status": "PUBLISHED",
+    "publishedAt": "2026-04-13T09:00:05.000Z"
+  },
+  "jobId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "source": "api",
+  "createdAt": "2026-04-07T10:00:00.000Z",
+  "updatedAt": "2026-04-07T10:32:18.000Z"
+}
+```
+`schedule` is `null` for immediate posts. `postUrl` is `null` until published.  
+Use this endpoint to poll status after publishing.
 
 #### List posts
 ```
 GET /api/v1/post?status=PENDING&limit=20&cursor=<cursor>
-Scope: post:read
+Scope: posts:read
 ```
 Status filter values: `DRAFT`, `PENDING`, `PUBLISHED`, `FAILED`
-
-#### Get a post
-```
-GET /api/v1/post/:postId
-Scope: post:read
-```
 
 #### Reschedule a post
 ```
 PATCH /api/v1/post/:postId
-Scope: post:write
+Scope: posts:reschedule
 Body: { "publishAt": "2025-12-31T09:00:00Z" }
 ```
-Only works on posts with status `PENDING`. The new date must be in the future.
+Only works on posts with status `PENDING`. The new date must be in the future.  
+Returns `{ id, scheduledFor }`.
 
 #### Delete a post
 ```
 DELETE /api/v1/post/delete/:postId
-Scope: post:write
+Scope: posts:delete
 ```
-Cancels scheduling automatically if the post is `PENDING`.
+Cancels scheduling automatically if the post is `PENDING`.  
+Returns `{ success: true, deletedPostId: "..." }`.
 
 ---
 
@@ -148,44 +172,56 @@ Cancels scheduling automatically if the post is `PENDING`.
 #### Upload media (presigned URL flow)
 ```
 POST /api/v1/media
-Scope: media:write
+Scope: media:upload
 Body: { "fileName": "photo.jpg", "contentType": "image/jpeg", "sizeInBytes": 204800 }
 ```
-Returns `{ mediaId, uploadUrl, publicUrl }`.  
-Then upload the file with a PUT request to `uploadUrl`:
+Returns `201` with:
+```json
+{
+  "id": "cm3media001xyz",
+  "uploadUrl": "https://storage.example.com/...?X-Amz-Signature=...",
+  "publicUrl": "https://cdn.dopost.co/media/.../photo.jpg",
+  "fileName": "photo.jpg",
+  "contentType": "image/jpeg",
+  "expiresIn": 3600
+}
+```
+
+- `uploadUrl` is a temporary presigned URL — upload the file with a PUT request within `expiresIn` seconds
+- `publicUrl` is the permanent URL — use this as the `media` URL when publishing
+- Maximum file size: 1 GB
 
 ```bash
 curl -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "$UPLOAD_URL"
 ```
 
-Use `publicUrl` as the `media` URL when publishing.
-
 #### List media
 ```
 GET /api/v1/media?limit=20&cursor=<cursor>
-Scope: media:read
+Scope: media:list
 ```
 
 #### Delete media
 ```
 DELETE /api/v1/media/:mediaId
-Scope: media:write
+Scope: media:delete
 ```
+Returns `{ message: "Media deleted", mediaId: "..." }`.
 
 ---
 
 ## Common workflows
 
 ### Publish a post now
-1. `GET /api/v1/social/accounts` → pick `accountId`
+1. `GET /api/v1/social/accounts` — pick `accountId`
 2. `POST /api/v1/post/publish` with `accountId` + `text`
-3. `GET /api/v1/post/status/:jobId` → poll until `published` or `failed`
+3. `GET /api/v1/post/:postId` — poll until `status` is `PUBLISHED` or `FAILED`
 
 ### Publish a post with an image
-1. `POST /api/v1/media` → get `uploadUrl` + `publicUrl`
+1. `POST /api/v1/media` — get `uploadUrl` + `publicUrl`
 2. PUT the file to `uploadUrl`
 3. `POST /api/v1/post/publish` with `media: [publicUrl]`
-4. Poll status
+4. `GET /api/v1/post/:postId` — poll until published
 
 ### Schedule and reschedule
 1. Publish with a future `publishAt`
@@ -260,45 +296,61 @@ curl -X POST \
   "success": true,
   "jobId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
   "postId": "cm3abc123def456",
-  "status": "processing",
-  "statusUrl": "/api/v1/post/status/f47ac10b-58cc-4372-a567-0e02b2c3d479"
+  "status": "processing"
 }
 ```
 
 ---
 
-### 3. Poll post status
+### 3. Check post status
 
 **Request**
 ```bash
 curl -H "x-api-key: $DOPOST_API_KEY" \
-  https://dopost.co/api/v1/post/status/f47ac10b-58cc-4372-a567-0e02b2c3d479
-```
-
-**Response — still processing**
-```json
-{
-  "status": "processing",
-  "postId": "cm3abc123def456"
-}
+  https://dopost.co/api/v1/post/cm3abc123def456
 ```
 
 **Response — published**
 ```json
 {
-  "status": "published",
-  "postId": "cm3abc123def456",
-  "publishedAt": "2026-04-07T10:32:18.000Z",
-  "platformPostId": "17846368219941196"
+  "id": "cm3abc123def456",
+  "status": "PUBLISHED",
+  "platform": "INSTAGRAM",
+  "text": "Hello from the Dopost API!",
+  "media": [],
+  "postUrl": "https://www.instagram.com/p/ABC123/",
+  "account": {
+    "id": "cm3xyz789ghi012",
+    "platform": "INSTAGRAM",
+    "platformUsername": "myaccount"
+  },
+  "schedule": null,
+  "jobId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "source": "api",
+  "createdAt": "2026-04-07T10:00:00.000Z",
+  "updatedAt": "2026-04-07T10:32:18.000Z"
 }
 ```
 
 **Response — failed**
 ```json
 {
-  "status": "failed",
-  "postId": "cm3abc123def456",
-  "error": "Invalid payload: image aspect ratio not supported for Reels"
+  "id": "cm3abc123def456",
+  "status": "FAILED",
+  "platform": "INSTAGRAM",
+  "text": "Hello from the Dopost API!",
+  "media": [],
+  "postUrl": null,
+  "account": {
+    "id": "cm3xyz789ghi012",
+    "platform": "INSTAGRAM",
+    "platformUsername": "myaccount"
+  },
+  "schedule": null,
+  "jobId": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+  "source": "api",
+  "createdAt": "2026-04-07T10:00:00.000Z",
+  "updatedAt": "2026-04-07T10:05:00.000Z"
 }
 ```
 
@@ -313,7 +365,7 @@ curl -X POST \
   -H "Content-Type: application/json" \
   -d '{
     "accountId": "cm3xyz789ghi012",
-    "text": "New reel! 🎬 #content",
+    "text": "New reel! #content",
     "media": ["https://cdn.example.com/video.mp4"],
     "platformOptions": {
       "postType": "reel"
@@ -328,8 +380,7 @@ curl -X POST \
   "success": true,
   "jobId": "a1b2c3d4-0000-4abc-8def-111122223333",
   "postId": "cm3reel001xyz",
-  "status": "processing",
-  "statusUrl": "/api/v1/post/status/a1b2c3d4-0000-4abc-8def-111122223333"
+  "status": "processing"
 }
 ```
 
@@ -356,8 +407,7 @@ curl -X POST \
   "success": true,
   "jobId": "b2c3d4e5-1111-4bcd-9ef0-222233334444",
   "postId": "cm3sched001abc",
-  "status": "scheduled",
-  "statusUrl": "/api/v1/post/status/b2c3d4e5-1111-4bcd-9ef0-222233334444"
+  "status": "scheduled"
 }
 ```
 
@@ -378,12 +428,15 @@ curl -X POST \
   https://dopost.co/api/v1/media
 ```
 
-**Response `200 OK`**
+**Response `201 Created`**
 ```json
 {
-  "mediaId": "cm3media001xyz",
+  "id": "cm3media001xyz",
   "uploadUrl": "https://storage.example.com/uploads/photo.jpg?X-Amz-Signature=...",
-  "publicUrl": "https://cdn.dopost.co/media/cm3media001xyz/photo.jpg"
+  "publicUrl": "https://cdn.dopost.co/media/cm3media001xyz/photo.jpg",
+  "fileName": "photo.jpg",
+  "contentType": "image/jpeg",
+  "expiresIn": 3600
 }
 ```
 
@@ -392,7 +445,7 @@ curl -X POST \
 curl -X PUT \
   -H "Content-Type: image/jpeg" \
   --data-binary @photo.jpg \
-  "$UPLOAD_URL"
+  "https://storage.example.com/uploads/photo.jpg?X-Amz-Signature=..."
 ```
 Returns `200` with empty body on success.
 
@@ -425,10 +478,8 @@ curl -X PATCH \
 **Response `200 OK`**
 ```json
 {
-  "success": true,
-  "postId": "cm3sched001abc",
-  "publishAt": "2026-04-20T14:00:00Z",
-  "status": "PENDING"
+  "id": "cm3sched001abc",
+  "scheduledFor": "2026-04-20T14:00:00.000Z"
 }
 ```
 
@@ -478,7 +529,7 @@ curl -X DELETE \
 ```json
 {
   "success": true,
-  "postId": "cm3sched001abc"
+  "deletedPostId": "cm3sched001abc"
 }
 ```
 
