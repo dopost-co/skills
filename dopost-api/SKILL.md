@@ -47,7 +47,10 @@ The `id` field is the `accountId` needed for publishing.
 GET /api/v1/social/limits/:platform
 Scope: social:read
 ```
-Platforms: `instagram`, `tiktok`, `youtube`, `facebook`, `linkedin`, `x`, `threads`, `bluesky`, `mastodon`, `pinterest`
+Platforms: `x`, `instagram`, `instagram_direct`, `facebook`, `linkedin`, `linkedin_organization`, `tiktok`, `youtube`, `threads`, `bluesky`, `mastodon`, `pinterest`
+
+> `instagram` = connected via Meta Business (Facebook Page linked). `instagram_direct` = connected directly via Instagram OAuth.  
+> `linkedin` = personal profile. `linkedin_organization` = company page.
 
 ```bash
 curl -H "x-api-key: $DOPOST_API_KEY" https://dopost.co/api/v1/social/limits/instagram
