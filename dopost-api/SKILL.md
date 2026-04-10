@@ -1,10 +1,14 @@
 ---
 name: dopost-api
 description: Use the Dopost REST API to publish, schedule, and manage social media posts programmatically. Use this skill when the user wants to publish to social media, schedule posts, manage media uploads, check post status, list connected accounts, or interact with any Dopost API endpoint. Also activate when the user mentions dopost, the Dopost API, social media automation, or publishing via API key.
-license: MIT
 metadata:
-  version: 1.1.0
-  author: dopost-co
+  openclaw:
+    version: 1.1.0
+    homepage: https://dopost.co/docs/api
+    requires:
+      env:
+        - DOPOST_API_KEY
+    primaryEnv: DOPOST_API_KEY
 ---
 
 # Dopost API
