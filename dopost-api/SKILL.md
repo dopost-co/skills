@@ -194,9 +194,21 @@ Returns `201` with:
 - `uploadUrl` is a temporary presigned URL — upload the file with a PUT request within `expiresIn` seconds
 - `publicUrl` is the permanent URL — use this as the `media` URL when publishing
 - Maximum file size: 1 GB
+- After the PUT, call `/finalize` (see below) to confirm the upload
 
 ```bash
 curl -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "$UPLOAD_URL"
+```
+
+#### Finalize media upload
+```
+POST /api/v1/media/{id}/finalize
+Scope: media:upload
+```
+Must be called after the PUT to confirm the upload. Verifies the file exists in storage, extracts metadata (dimensions, duration, thumbnail), and marks the record as `READY`. Media **only appears in the library** after finalization.
+
+```bash
+curl -X POST -H "x-api-key: $DOPOST_API_KEY" "https://dopost.co/api/v1/media/$MEDIA_ID/finalize"
 ```
 
 #### List media
@@ -222,10 +234,11 @@ Returns `{ message: "Media deleted", mediaId: "..." }`.
 3. `GET /api/v1/post/:postId` — poll until `status` is `PUBLISHED` or `FAILED`
 
 ### Publish a post with an image
-1. `POST /api/v1/media` — get `uploadUrl` + `publicUrl`
+1. `POST /api/v1/media` — get `id`, `uploadUrl` + `publicUrl`
 2. PUT the file to `uploadUrl`
-3. `POST /api/v1/post/publish` with `media: [publicUrl]`
-4. `GET /api/v1/post/:postId` — poll until published
+3. `POST /api/v1/media/{id}/finalize` — confirm upload and get metadata
+4. `POST /api/v1/post/publish` with `media: [publicUrl]`
+5. `GET /api/v1/post/:postId` — poll until published
 
 ### Schedule and reschedule
 1. Publish with a future `publishAt`
