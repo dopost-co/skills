@@ -1,9 +1,9 @@
 ---
 name: dopost-api
-description: Use the Dopost REST API to publish, schedule, and manage social media posts programmatically. Use this skill when the user wants to publish to social media, schedule posts, manage media uploads, check post status, list connected accounts, or interact with any Dopost API endpoint. Also activate when the user mentions dopost, the Dopost API, social media automation, or publishing via API key.
+description: Use the Dopost REST API to publish, schedule, manage social media posts, and retrieve account, post, content, and audience analytics. Use this skill when the user wants to publish to social media, schedule posts, manage media uploads, check post status, list connected accounts, analyze performance, or interact with any Dopost API endpoint. Also activate when the user mentions dopost, the Dopost API, social media automation, or publishing via API key.
 metadata:
   openclaw:
-    version: 1.1.0
+    version: 1.2.0
     homepage: https://dopost.co/docs/api
     requires:
       env:
@@ -23,7 +23,7 @@ Dopost is a social media management platform. Its REST API lets you publish and 
 
 ## Setup
 
-Always check for an `.env` or `.env.local` file with `DOPOST_API_KEY`. If not present, ask the user for their key before proceeding.
+Use `DOPOST_API_KEY` from the environment or an existing `.env` / `.env.local` file without displaying it. If missing, ask the user to configure it locally. Create the key in dopost under **Settings → API keys** (https://dopost.co/dashboard/settings/api-keys), select the workspace and required permissions, and copy it when revealed. API and MCP access requires a Pro or Agency workspace.
 
 ```bash
 export DOPOST_API_KEY="dpk_live_..."
@@ -552,8 +552,62 @@ curl -X DELETE \
 
 ---
 
+## Analytics
+
+All five endpoints below use `GET` and require `analytics:read` on the API key plus a Pro or Agency workspace. Existing keys do not gain new permissions automatically; create a key with the required scope when needed.
+
+| Endpoint | Use |
+|----------|-----|
+| `/api/v1/analytics/overview` | Account KPIs, account/platform rankings, comparisons, and data coverage |
+| `/api/v1/analytics/posts` | Rank posts published through dopost by performance |
+| `/api/v1/analytics/posts/:postId` | Latest post metrics, collection progress, and checkpoint snapshots |
+| `/api/v1/analytics/insights` | Best Time, Best Day, Format Opportunity, and Platform Pulse |
+| `/api/v1/analytics/audience` | Available audience breakdowns for Facebook and Instagram |
+
+### Filters and pagination
+
+For overview, post lists, insights, and audience, use `days` (default 30) or both `startDate` and `endDate`. Ranges must fit the workspace's plan history. Choose at most one of `accountId`, comma-separated `accountIds`, or `groupId`; `platform` can also restrict the results. Audience requires a single `accountId`.
+
+Overview supports `comparison=previous|none`, comma-separated `metrics`, and `includeSeries=true|false` (REST default: true). Use `includeSeries=false` when only summary KPIs are needed.
+
+Post lists support `sortBy=overall|likes|engagements|comments|reach|views|shares|saves`, `limit` (1–100, default 20), and an opaque `cursor`. Follow `nextCursor` while `hasMore` is true when the user needs additional results. Do not imply the first page contains every post.
+
+Audience supports `metric` (default `followerDemographics`), `dimension=age|city|country|gender|locale`, and `timeframe=day|this_week|this_month`. TikTok Analytics is unavailable until the integration is enabled and the account has the required permissions.
+
+### Example requests
+
+```bash
+# Compare account performance without daily series.
+curl -H "x-api-key: $DOPOST_API_KEY" \
+  'https://dopost.co/api/v1/analytics/overview?days=30&comparison=previous&includeSeries=false'
+
+# Find the strongest posts by engagement.
+curl -H "x-api-key: $DOPOST_API_KEY" \
+  'https://dopost.co/api/v1/analytics/posts?days=30&sortBy=engagements&limit=20'
+
+# Inspect one post: replace the placeholder with an actual dopost post ID.
+curl -H "x-api-key: $DOPOST_API_KEY" \
+  'https://dopost.co/api/v1/analytics/posts/POST_ID'
+
+# Read timing and format insights.
+curl -H "x-api-key: $DOPOST_API_KEY" \
+  'https://dopost.co/api/v1/analytics/insights?days=30'
+
+# Read audience countries: replace the placeholder with an actual account ID.
+curl -H "x-api-key: $DOPOST_API_KEY" \
+  'https://dopost.co/api/v1/analytics/audience?accountId=ACCOUNT_ID&metric=followerDemographics&dimension=country'
+```
+
+Include `dataThrough`, `lastUpdatedAt`, or `asOf` when available. Treat omitted or `null` values as unavailable, not zero; a returned `0` is a measured zero. Explain partial coverage and insufficient insight readiness instead of inventing metrics or recommending a best time without data. Post lists omit posts without available analytics; a post detail `404` can mean no analytics exists or the post is outside the workspace.
+
+For errors: `400` means invalid filters or a range outside plan history; `401` means invalid/missing authentication; `403` means missing scope or plan access; `429` means rate limiting. Do not retry authorization errors indefinitely.
+
+Full endpoint reference: https://dopost.co/docs/api/endpoints/analytics/overview (and the sibling posts, post-detail, insights, and audience pages).
+
 ## MCP server (optional)
 
 If the user has the Dopost MCP server configured, prefer using MCP tools (`publish_post`, `list_accounts`, etc.) over raw HTTP calls — they handle auth and path safety automatically.
 
-MCP setup: https://dopost.co/docs/api
+For analytics, use `get_analytics_overview`, `list_post_performance`, `get_post_performance`, `get_content_insights`, and `get_audience_analytics`. MCP series are omitted by default and post lists return at most 20 items per call; follow the tool schema rather than applying REST limits. Reconnect OAuth to approve `analytics:read` if it was not previously granted.
+
+MCP setup: https://dopost.co/docs/api/mcp/setup
