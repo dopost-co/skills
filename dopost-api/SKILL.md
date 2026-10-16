@@ -557,3 +557,35 @@ curl -X DELETE \
 If the user has the Dopost MCP server configured, prefer using MCP tools (`publish_post`, `list_accounts`, etc.) over raw HTTP calls — they handle auth and path safety automatically.
 
 MCP setup: https://dopost.co/docs/api
+
+## Workspace dates and Google Business Profile
+
+Unzoned publication/reschedule dates use the workspace IANA timezone automatically.
+Keep an explicit Z or offset if the user supplied one; do not invent a timezone.
+An optional `timezone` override is accepted by publish/reschedule. Recurring
+creation defaults to the workspace zone; updates retain the existing series zone.
+
+Google Business accounts use `GOOGLE_BUSINESS`; list accounts with
+`platform=google-business`. Connect and select verified locations in the dopost
+web flow before using the returned dopost accountId. Google login alone does not
+connect a location. Use the existing action scopes, never Google access tokens.
+
+Google `platformOptions` supports `postType` (standard/event/offer/media),
+`ctaType` (book/order/shop/learn_more/sign_up/call), `ctaUrl`, `eventTitle`,
+`eventStart`, `eventEnd`, `couponCode`, `redeemOnlineUrl`, `termsConditions`,
+and `mediaCategory`. Event/offer title and dates are required; text/media are
+optional. Gallery media has no text/CTA. PROFILE and COVER require photos; LOGO
+aliases PROFILE. Videos are MP4 gallery uploads only. Recurring supports standard
+updates only. Query `/api/v1/social/limits/google-business` for conditional rules.
+
+Google post readback includes platformOptions, providerStatus,
+providerResourceName and structured error information. Submission acceptance
+is not a guarantee of public visibility while Google processes/moderates it.
+
+Analytics Overview accepts GOOGLE_BUSINESS and Search/Maps/device breakdowns,
+websiteClicks, callClicks, directionRequests, messagingClicks, bookings and
+menuClicks. Views aliases profile impressions; never add both. These are location
+metrics, not post metrics. `/api/v1/analytics/search-terms` returns monthly terms
+with per-location values or privacy thresholds, using the existing analytics:read
+scope. Preserve null vs zero and thresholds; use nextCursor for pagination.
+See https://dopost.co/docs/api/google-business for examples and the full contract.
