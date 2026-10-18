@@ -3,7 +3,7 @@ name: dopost-api
 description: Use the Dopost REST API to publish, schedule, manage social media posts, and retrieve account, post, content, and audience analytics. Use this skill when the user wants to publish to social media, schedule posts, manage media uploads, check post status, list connected accounts, analyze performance, or interact with any Dopost API endpoint. Also activate when the user mentions dopost, the Dopost API, social media automation, or publishing via API key.
 metadata:
   openclaw:
-    version: 1.2.0
+    version: 1.3.0
     homepage: https://dopost.co/docs/api
     requires:
       env:
@@ -15,15 +15,15 @@ metadata:
 
 Dopost is a social media management platform. Its REST API lets you publish and schedule posts, manage media, and inspect connected social accounts.
 
-**Base URL:** `https://dopost.co/api/v1`  
-**Auth:** All requests require the header `x-api-key: <your-key>`  
+**Base URL:** `https://dopost.co/api/v1`
+**Auth:** All requests require the header `x-api-key: <your-key>`
 **Full docs:** https://dopost.co/docs/api
 
 ---
 
 ## Setup
 
-Use `DOPOST_API_KEY` from the environment or an existing `.env` / `.env.local` file without displaying it. If missing, ask the user to configure it locally. Create the key in dopost under **Settings → API keys** (https://dopost.co/dashboard/settings/api-keys), select the workspace and required permissions, and copy it when revealed. API and MCP access requires a Pro or Agency workspace.
+Use `DOPOST_API_KEY` from the environment or an existing `.env` / `.env.local` file without displaying it. If missing, ask the user to configure it locally. Create the key in dopost under **Settings → API keys** (https://dopost.co/dashboard/settings/api-keys), select the workspace and required permissions, and copy it when revealed. API and MCP access requires a Creator, Pro or Agency workspace.
 
 ```bash
 export DOPOST_API_KEY="dpk_live_..."
@@ -43,7 +43,7 @@ Scope: social:accounts
 ```bash
 curl -H "x-api-key: $DOPOST_API_KEY" https://dopost.co/api/v1/social/accounts
 ```
-Returns `{ accounts: [{ id, platform, platformUsername, platformUserId }] }`.  
+Returns `{ accounts: [{ id, platform, platformUsername, platformUserId }] }`.
 The `id` field is the `accountId` needed for publishing.
 
 #### Get platform limits
@@ -51,9 +51,9 @@ The `id` field is the `accountId` needed for publishing.
 GET /api/v1/social/limits/:platform
 Scope: social:limits
 ```
-Platforms: `x`, `instagram`, `instagram_direct`, `facebook`, `linkedin`, `linkedin_organization`, `tiktok`, `youtube`, `threads`, `bluesky`, `mastodon`, `pinterest`
+Platforms: `x`, `instagram`, `instagram_direct`, `facebook`, `linkedin`, `linkedin_organization`, `tiktok`, `youtube`, `threads`, `bluesky`, `mastodon`, `pinterest`, `google-business`
 
-> `instagram` = connected via Meta Business (Facebook Page linked). `instagram_direct` = connected directly via Instagram OAuth.  
+> `instagram` = connected via Meta Business (Facebook Page linked). `instagram_direct` = connected directly via Instagram OAuth.
 > `linkedin` = personal profile. `linkedin_organization` = company page.
 
 ```bash
@@ -78,7 +78,7 @@ Scope: posts:create
   "platformOptions": {}
 }
 ```
-- At least `text` or `media` is required
+- At least `text` or `media` is required, except for Google Business events and offers with the required event fields
 - `media` can be an array of URL strings or objects `{ url: "..." }`
 - Maximum 10 media items per post
 - Omit `publishAt` (or set to `null`) to publish immediately
@@ -142,7 +142,7 @@ Returns the full post object including publish status:
   "updatedAt": "2026-04-07T10:32:18.000Z"
 }
 ```
-`schedule` is `null` for immediate posts. `postUrl` is `null` until published.  
+`schedule` is `null` for immediate posts. `postUrl` is `null` until published.
 Use this endpoint to poll status after publishing.
 
 #### List posts
@@ -158,7 +158,7 @@ PATCH /api/v1/post/:postId
 Scope: posts:reschedule
 Body: { "publishAt": "2025-12-31T09:00:00Z" }
 ```
-Only works on posts with status `PENDING`. The new date must be in the future.  
+Only works on posts with status `PENDING`. The new date must be in the future.
 Returns `{ id, scheduledFor }`.
 
 #### Delete a post
@@ -166,7 +166,7 @@ Returns `{ id, scheduledFor }`.
 DELETE /api/v1/post/delete/:postId
 Scope: posts:delete
 ```
-Cancels scheduling automatically if the post is `PENDING`.  
+Cancels scheduling automatically if the post is `PENDING`.
 Returns `{ success: true, deletedPostId: "..." }`.
 
 ---
@@ -554,7 +554,7 @@ curl -X DELETE \
 
 ## Analytics
 
-All five endpoints below use `GET` and require `analytics:read` on the API key plus a Pro or Agency workspace. Existing keys do not gain new permissions automatically; create a key with the required scope when needed.
+All five endpoints below use `GET` and require `analytics:read` on the API key plus a Creator, Pro or Agency workspace. Existing keys do not gain new permissions automatically; create a key with the required scope when needed.
 
 | Endpoint | Use |
 |----------|-----|
@@ -611,3 +611,35 @@ If the user has the Dopost MCP server configured, prefer using MCP tools (`publi
 For analytics, use `get_analytics_overview`, `list_post_performance`, `get_post_performance`, `get_content_insights`, and `get_audience_analytics`. MCP series are omitted by default and post lists return at most 20 items per call; follow the tool schema rather than applying REST limits. Reconnect OAuth to approve `analytics:read` if it was not previously granted.
 
 MCP setup: https://dopost.co/docs/api/mcp/setup
+
+## Workspace dates and Google Business Profile
+
+Unzoned publication/reschedule dates use the workspace IANA timezone automatically.
+Keep an explicit Z or offset if the user supplied one; do not invent a timezone.
+An optional `timezone` override is accepted by publish/reschedule. Recurring
+creation defaults to the workspace zone; updates retain the existing series zone.
+
+Google Business accounts use `GOOGLE_BUSINESS`; list accounts with
+`platform=google-business`. Connect and select verified locations in the dopost
+web flow before using the returned dopost accountId. Google login alone does not
+connect a location. Use the existing action scopes, never Google access tokens.
+
+Google `platformOptions` supports `postType` (standard/event/offer/media),
+`ctaType` (book/order/shop/learn_more/sign_up/call), `ctaUrl`, `eventTitle`,
+`eventStart`, `eventEnd`, `couponCode`, `redeemOnlineUrl`, `termsConditions`,
+and `mediaCategory`. Event/offer title and dates are required; text/media are
+optional. Gallery media has no text/CTA. PROFILE and COVER require photos; LOGO
+aliases PROFILE. Videos are MP4 gallery uploads only. Recurring supports standard
+updates only. Query `/api/v1/social/limits/google-business` for conditional rules.
+
+Google post readback includes platformOptions, providerStatus,
+providerResourceName and structured error information. Submission acceptance
+is not a guarantee of public visibility while Google processes/moderates it.
+
+Analytics Overview accepts GOOGLE_BUSINESS and Search/Maps/device breakdowns,
+websiteClicks, callClicks, directionRequests, messagingClicks, bookings and
+menuClicks. Views aliases profile impressions; never add both. These are location
+metrics, not post metrics. `/api/v1/analytics/search-terms` returns monthly terms
+with per-location values or privacy thresholds, using the existing analytics:read
+scope. Preserve null vs zero and thresholds; use nextCursor for pagination.
+See https://dopost.co/docs/api/google-business for examples and the full contract.

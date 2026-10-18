@@ -49,4 +49,4 @@ For other clients, check the installer's [supported agents and identifiers](http
 
 ## Configure access
 
-Create a workspace API key in [Settings → API keys](https://dopost.co/dashboard/settings/api-keys) and configure `DOPOST_API_KEY` in the environment where your agent runs. API access requires a Pro or Agency workspace. Select the permissions you need, including `analytics:read` for statistics.
+Create a workspace API key in [Settings → API keys](https://dopost.co/dashboard/settings/api-keys) and configure `DOPOST_API_KEY` in the environment where your agent runs. API access requires a Creator, Pro or Agency workspace. Select the permissions you need, including `analytics:read` for statistics.
