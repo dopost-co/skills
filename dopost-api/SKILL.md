@@ -1,9 +1,9 @@
 ---
 name: dopost-api
-description: Use the Dopost REST API to publish, schedule, manage social media posts, and retrieve account, post, content, and audience analytics. Use this skill when the user wants to publish to social media, schedule posts, manage media uploads, check post status, list connected accounts, analyze performance, or interact with any Dopost API endpoint. Also activate when the user mentions dopost, the Dopost API, social media automation, or publishing via API key.
+description: Use the Dopost REST API to save drafts, publish or schedule social posts individually or in groups, upload media, manage connected accounts, and retrieve social analytics. Use when the task requires Dopost API requests from an agent with HTTP or terminal access; prefer connected MCP tools when available.
 metadata:
   openclaw:
-    version: 1.3.0
+    version: 1.4.0
     homepage: https://dopost.co/docs/api
     requires:
       env:
@@ -64,7 +64,7 @@ curl -H "x-api-key: $DOPOST_API_KEY" https://dopost.co/api/v1/social/limits/inst
 
 ### Posts
 
-#### Publish or schedule a post
+#### Publish, schedule, or save a draft
 ```
 POST /api/v1/post/publish
 Scope: posts:create
@@ -78,12 +78,47 @@ Scope: posts:create
   "platformOptions": {}
 }
 ```
-- At least `text` or `media` is required, except for Google Business events and offers with the required event fields
-- `media` can be an array of URL strings or objects `{ url: "..." }`
+- Use `accountId` for one account or `posts` for a group; never send both
+- At least `text` or `media` is required, except for drafts and Google Business events and offers with the required event fields
+- `media` can be an array of URL strings or objects `{ url: "...", mediaId: "..." }`; use a returned ready media ID only with its matching URL
 - Maximum 10 media items per post
-- Omit `publishAt` (or set to `null`) to publish immediately
-- Returns `202` with `{ success, jobId, postId, status }`
+- Omit `publishAt` (or set to `null`) to publish immediately unless `draft: true`
+- Publishing/scheduling returns `202` with `{ success, jobId, postId, status, warnings }`
 - Publishing is **asynchronous** — poll `GET /api/v1/post/:postId` to check status
+
+Before publishing or scheduling, call `GET /api/v1/social/limits/:platform` for each distinct destination platform. Check text, media count and the chosen post type's requirements, including per-account overrides and thread entries. Use only verified file metadata; never infer dimensions, duration or codecs from a filename or URL. Explain known violations with the affected field, actual value and allowed limit. The server inspects received files and runs the same platform validation as the composer before creating posts; limits alone do not inspect an attachment or guarantee publication.
+
+##### Save a draft
+
+```json
+{
+  "accountId": "<accountId>",
+  "draft": true,
+  "text": "Work in progress"
+}
+```
+
+Set `draft: true` and omit `publishAt`. This returns `201` with `status: "draft"`, `postId` and no `jobId`; Get Post returns `DRAFT`. Drafts create no publishing schedule or monthly publication charge and can be edited or published in the dopost dashboard. They may have incomplete text/media or exceed platform publishing limits, but attached files must still pass upload size, format and integrity checks. A non-null `publishAt` with `draft: true` returns `400`.
+
+##### Create a post group
+
+```json
+{
+  "text": "Shared caption",
+  "media": ["https://example.com/photo.jpg"],
+  "draft": true,
+  "posts": [
+    { "accountId": "<instagramAccountId>" },
+    { "accountId": "<facebookAccountId>", "text": "Facebook caption" }
+  ]
+}
+```
+
+`posts` accepts 1–20 distinct active accounts in one authorized workspace. Each item requires `accountId` and inherits top-level `text`, `media`, `platformOptions`, `replyTo` and `thread`. An item field replaces the entire default field: objects and arrays are not merged; `media: []` clears shared media. Put `draft`, `publishAt` and `timezone` only at the top level, where they apply to the whole group.
+
+Shared media URLs are imported and inspected once per request, then referenced by each account. Different media URLs are prepared separately. Every account is authorized and its publishing content validated before any post is created, with the draft exceptions above. A group validation failure rejects the whole request and identifies `accountId`, zero-based `postIndex` and the affected field.
+
+The response contains `groupId` and `posts[]` with each `accountId` and `postId`. Draft groups return `201`, `status: "draft"` and no `jobId`; publishing/scheduled groups return `202`. Poll each `postId`, not `groupId`: after acceptance, delivery outcomes are independent per social network. Publishing counts one publication per account. Deleting a member deletes the whole group; rescheduling by `postId` changes only that member.
 
 ##### Platform-specific options (`platformOptions`)
 
@@ -167,6 +202,7 @@ DELETE /api/v1/post/delete/:postId
 Scope: posts:delete
 ```
 Cancels scheduling automatically if the post is `PENDING`.
+If the post belongs to a group, deletion affects the entire group. A published or processing member blocks deletion. Confirm the group scope before deleting.
 Returns `{ success: true, deletedPostId: "..." }`.
 
 ---
@@ -177,7 +213,7 @@ Returns `{ success: true, deletedPostId: "..." }`.
 ```
 POST /api/v1/media
 Scope: media:upload
-Body: { "fileName": "photo.jpg", "contentType": "image/jpeg", "sizeInBytes": 204800 }
+Body: { "fileName": "photo.jpg", "contentType": "image/jpeg", "sizeInBytes": 204800, "purpose": "post" }
 ```
 Returns `201` with:
 ```json
@@ -192,9 +228,11 @@ Returns `201` with:
 ```
 
 - `uploadUrl` is a temporary presigned URL — upload the file with a PUT request within `expiresIn` seconds
-- `publicUrl` is the permanent URL — use this as the `media` URL when publishing
-- Maximum file size: 1 GB
-- After the PUT, call `/finalize` (see below) to confirm the upload
+- `publicUrl` can be used in posts only after successful finalization
+- `purpose: "library"` is the default: up to 1 GB per file, subject to available Media storage; the ready file appears in the library
+- `purpose: "post"` prepares an attachment outside the Media library and its storage quota: 500 MB on paid plans, 50 MB on Free; platform limits can be smaller
+- Accepted file types: JPEG, PNG, GIF, MP4 and MOV; the declared MIME must match the actual bytes
+- After the PUT, call `/finalize` (see below) and wait for `READY` before attaching the file
 
 ```bash
 curl -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "$UPLOAD_URL"
@@ -205,11 +243,17 @@ curl -X PUT -H "Content-Type: image/jpeg" --data-binary @photo.jpg "$UPLOAD_URL"
 POST /api/v1/media/{id}/finalize
 Scope: media:upload
 ```
-Must be called after the PUT to confirm the upload. Verifies the file exists in storage, extracts metadata (dimensions, duration, thumbnail), and marks the record as `READY`. Media **only appears in the library** after finalization.
+Must be called after the PUT. Checks actual file size, format and integrity, decodes videos completely, extracts metadata and a thumbnail, and marks the record as `READY`. Only `purpose: "library"` files appear in the library. Repeating finalization on a ready file is safe. Successful upload/finalization confirms file validity, not compatibility with every publishing destination; platform rules run when publishing or scheduling.
+
+Invalid or oversized direct uploads return `415` or `413`, are marked `FAILED`, and their stored objects are removed. Inspection-service outages/timeouts return `503` with `retryable: true`; the direct upload stays pending so retry `/finalize` with the same media ID instead of uploading the file again. See Error handling below for codes and actions.
 
 ```bash
 curl -X POST -H "x-api-key: $DOPOST_API_KEY" "https://dopost.co/api/v1/media/$MEDIA_ID/finalize"
 ```
+
+#### Attach an external URL to a post
+
+Pass a public HTTPS URL directly in `media` when the file is already accessible online. Dopost imports it into its storage as a post-only attachment before accepting the post, including draft and thread attachments. The source must remain accessible until import completes; delivery uses the stored copy afterward. A ready dopost file in the destination workspace is reused. Failed imports reject the request before a post is created and clean up the new staged copy. Do not delete an existing library file because it fails a destination's publishing rules.
 
 #### List media
 ```
@@ -230,11 +274,12 @@ Returns `{ message: "Media deleted", mediaId: "..." }`.
 
 ### Publish a post now
 1. `GET /api/v1/social/accounts` — pick `accountId`
-2. `POST /api/v1/post/publish` with `accountId` + `text`
-3. `GET /api/v1/post/:postId` — poll until `status` is `PUBLISHED` or `FAILED`
+2. `GET /api/v1/social/limits/:platform` — check text and the selected format
+3. `POST /api/v1/post/publish` with `accountId` + `text`
+4. `GET /api/v1/post/:postId` — poll until `status` is `PUBLISHED` or `FAILED`
 
 ### Publish a post with an image
-1. `POST /api/v1/media` — get `id`, `uploadUrl` + `publicUrl`
+1. Check destination limits, then `POST /api/v1/media` with `purpose: "post"` — get `id`, `uploadUrl` + `publicUrl`
 2. PUT the file to `uploadUrl`
 3. `POST /api/v1/media/{id}/finalize` — confirm upload and get metadata
 4. `POST /api/v1/post/publish` with `media: [publicUrl]`
@@ -255,9 +300,23 @@ Returns `{ message: "Media deleted", mediaId: "..." }`.
 | `401` | Invalid or missing `x-api-key` |
 | `403` | API key lacks the required scope |
 | `404` | Resource not found or inactive account |
+| `409` | Media is unavailable, not ready, or changed; check `MEDIA_NOT_READY` / `MEDIA_CHANGED` and the indicated recovery action |
+| `413` | Upload or platform file-size limit exceeded; reduce the file size to the returned limit |
+| `415` | File is unreadable, corrupt, unsupported, or has a mismatched declared MIME |
+| `422` | Platform validation or permanent source error; inspect `errorCode`, `issues` and the affected field |
 | `429` | Rate limit or monthly quota exceeded. Check `X-RateLimit-*` headers |
+| `503` | Temporary source/storage/inspection failure; inspect `retryable` and retry the failed operation when appropriate |
+| `504` | Media download timed out; retry or use a faster source URL |
 
 On `429`, respect the `Retry-After` header before retrying.
+
+Report the API's readable `error` and `errorCode`, including `fileName`, `field`, `stage`, `retryable`, `actual` and `expected` when supplied. For `POST_VALIDATION_FAILED`, explain each blocking `issues[]` entry using its received value and allowed limit; size violations use `413`, other platform violations use `422`. `warnings` are recommendations and do not block acceptance. Group errors identify the account and `postIndex`; thread/file indexes are zero-based.
+
+For `MEDIA_FILE_CORRUPT` / `MEDIA_UNREADABLE`, ask for a newly exported readable file. For `MEDIA_FORMAT_UNSUPPORTED`, request a supported format; for `MEDIA_TYPE_MISMATCH`, correct the declared type or file. `MEDIA_INSPECTION_TIMEOUT` / `MEDIA_INSPECTION_UNAVAILABLE` are service failures, not proof that the file is bad. Retry direct finalization on the same ID when `retryable: true`. A successful finalization still does not bypass platform validation.
+
+Source failures expose `MEDIA_SOURCE_DNS_ERROR`, `MEDIA_SOURCE_HTTP_ERROR`, `MEDIA_SOURCE_TLS_ERROR`, `MEDIA_SOURCE_UNAVAILABLE` or `MEDIA_DOWNLOAD_TIMEOUT`, with `reasonCode` / `upstreamStatus` when known. Storage failures use `MEDIA_STORAGE_UNAVAILABLE`. Follow the returned `retryable` value; `null` means unknown. Never invent a cause or retry unchanged input marked `retryable: false`.
+
+After acceptance, poll the returned post ID rather than resubmitting it. If a post-creation response is lost, check recent posts before retrying to avoid creating a duplicate. A failed status read does not mean that publication failed.
 
 ---
 
@@ -440,7 +499,8 @@ curl -X POST \
   -d '{
     "fileName": "photo.jpg",
     "contentType": "image/jpeg",
-    "sizeInBytes": 204800
+    "sizeInBytes": 204800,
+    "purpose": "post"
   }' \
   https://dopost.co/api/v1/media
 ```
@@ -466,7 +526,15 @@ curl -X PUT \
 ```
 Returns `200` with empty body on success.
 
-**Step 3 — Publish using the public URL**
+**Step 3 — Finalize and wait for READY**
+```bash
+curl -X POST \
+  -H "x-api-key: $DOPOST_API_KEY" \
+  https://dopost.co/api/v1/media/cm3media001xyz/finalize
+```
+Continue only after successful finalization returns `status: "READY"`.
+
+**Step 4 — Publish using the public URL**
 ```bash
 curl -X POST \
   -H "x-api-key: $DOPOST_API_KEY" \

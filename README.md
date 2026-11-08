@@ -12,7 +12,7 @@ npx skills add dopost-co/skills
 
 | Skill | Description |
 |-------|-------------|
-| [dopost-api](./dopost-api/SKILL.md) | Publish and schedule posts, manage accounts and media, and retrieve account, post, content, and audience analytics via the dopost REST API |
+| [dopost-api](./dopost-api/SKILL.md) | Save drafts, publish or schedule posts in groups, manage media uploads, and retrieve social analytics via the dopost REST API |
 
 ## Usage with specific agents
 
